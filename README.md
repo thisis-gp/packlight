@@ -1,7 +1,7 @@
-# agentcaddy
+# packlight
 
-A caddy hands the golfer the right club for each shot. agentcaddy aims to hand your AI agent the
-right skill, tool and context for each request, and nothing more.
+Travel light. packlight aims to give your AI agent only the skills, tools and context each
+request needs, and keep the rest out of the way.
 
 **Status: early (v0.0.1).** Only the registry scanner works today. The routing is not built yet,
 and nothing here has been benchmarked. Please don't depend on it yet.
@@ -27,7 +27,7 @@ that no longer matters.
 ## What works today
 
 ```bash
-python -m agentcaddy.registry
+python -m packlight.registry
 ```
 
 Scans skills (Claude Code, Codex, Hermes, the shared `~/.agents/skills`, plugins), agents, MCP

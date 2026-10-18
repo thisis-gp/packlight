@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agentcaddy.registry import Capability, add, content_hash, parse_frontmatter
+from packlight.registry import Capability, add, content_hash, parse_frontmatter
 
 
 def test_frontmatter_plain_and_quoted():

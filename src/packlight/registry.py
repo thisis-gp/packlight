@@ -1,7 +1,7 @@
 """Scan every skill, agent, MCP server and context file into one registry.
 
 Capabilities are data: this file is the only thing that has to change when a new skill is added
-(it does not, because it scans folders). Run: python -m agentcaddy.registry
+(it does not, because it scans folders). Run: python -m packlight.registry
 """
 from __future__ import annotations
 
