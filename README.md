@@ -21,8 +21,9 @@ that no longer matters.
 - **Any agent, any scorer.** A small core (command line and Python library) plus adapters: a
   Claude Code hook, an MCP server, and others later. The scorer is swappable: keyword search
   (runs anywhere), embeddings, or a small fine-tuned decision model.
-- **Local.** Prompts never leave your machine. Any released model is trained only on public or
-  synthetic data.
+- **Local.** Prompts never leave your machine. The first model is trained on the author's own
+  skill library, using generated prompts. How well it works on other people's skills is
+  unproven until it is tested on them, and this README will say so plainly.
 
 ## What works today
 
@@ -57,8 +58,9 @@ rerank, and the skill selection in [Ratel](https://github.com/ratel-ai/ratel) an
 ## Roadmap
 
 1. Registry (done).
-2. Baselines and a public, reproducible test set with held-out skills.
-3. Training data from public and synthetic sources.
+2. Baselines and a reproducible test set built from the author's skill library, with whole
+   families of skills held out.
+3. Training data: generated prompts for each skill, checked by a second model.
 4. A fine-tuned scorer, compared against the best baseline.
 5. Shadow mode, then promotion only if the bar above is met.
 6. Adapters for Claude Code, MCP and other agents.
