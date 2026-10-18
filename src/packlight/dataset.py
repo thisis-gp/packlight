@@ -24,7 +24,8 @@ DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 PROMPTS_PATH = DATA_DIR / "prompts.jsonl"
 PROMPTS_PER_SKILL = 12
 JUDGE_CANDIDATES = 5
-WORKERS = 3
+WORKERS = 5
+GENERATION_ATTEMPTS = 2
 BODY_CHARS = 600
 
 GEN_SYSTEM = (
@@ -41,30 +42,44 @@ Write {n} different user messages where this skill would clearly be needed. Mix 
 - 3 indirect ones that describe the situation or goal without naming the skill or its jargon
 - 3 short, terse, lowercase messages with a typo or two, the way someone types fast
 - 3 longer ones with context (a paragraph, a file or error mentioned)
-Rules: never write the skill name "{name}". Do not mention that a skill exists. Vary topics and
-wording. Return only a JSON array of {n} strings."""
+Rules: never write the skill name "{name}". Do not mention that a skill exists. Each message
+must contain the real cues for when this skill applies (the situation, the goal, the words a
+person would use), so that someone reading only the skill's description would pick it. Vary
+topics and wording. Return only a JSON array of {n} strings."""
 
-JUDGE_SYSTEM = "You judge which tools an AI agent would need. Reply with a JSON array of ids only."
+JUDGE_SYSTEM = "You judge which skills an AI coding agent should load for a user message."
 JUDGE_TEMPLATE = """User message:
 {prompt}
 
-Candidate skills:
+Candidate skills (name: description):
 {candidates}
 
-Which candidates would a good agent actually need to load to do this well? Be strict: only
-include a skill if the message clearly needs what it provides. An empty array is allowed.
-Return only a JSON array of the ids (numbers)."""
+Which candidates match this message, meaning their description says to use them for this kind
+of request? Include a skill only if the message clearly fits it. An empty list is allowed.
+Reason in at most three short sentences. Then end with a final line in exactly this form:
+ANSWER: [ids]
+for example  ANSWER: [0, 3]  or  ANSWER: []"""
+ANSWER_RE = re.compile(r"ANSWER:\s*(\[[^\]]*\])")
+JUDGE_MAX_TOKENS = 1200
+JUDGE_ATTEMPTS = 2
 
 
 def parse_json_array(text: str) -> list:
+    """Pull a JSON array out of a model reply. Free models are sloppy, so fall back to regexes."""
     start, end = text.find("["), text.rfind("]")
     if start == -1 or end <= start:
         return []
-    try:
-        value = json.loads(text[start:end + 1])
-    except json.JSONDecodeError:
-        return []
-    return value if isinstance(value, list) else []
+    body = text[start:end + 1]
+    for strict in (True, False):
+        try:
+            value = json.loads(body, strict=strict)
+            return value if isinstance(value, list) else []
+        except json.JSONDecodeError:
+            continue
+    strings = re.findall(r'"((?:[^"\\]|\\.)*)"', body)
+    if strings:
+        return [item.replace('\\"', '"').replace("\n", " ") for item in strings]
+    return [int(n) for n in re.findall(r"(?<![\w.])\d+(?![\w.])", body)]
 
 
 def clean_prompts(items: list) -> list[str]:
@@ -94,8 +109,13 @@ def generate_for_skill(gateway: Gateway, skill: dict, n: int = PROMPTS_PER_SKILL
         name=skill["name"], description=skill["description"],
         body=skill["body_head"][:BODY_CHARS].replace("\n", " "), n=n,
     )
-    reply = gateway.chat([{"role": "system", "content": GEN_SYSTEM}, {"role": "user", "content": message}])
-    return [p for p in clean_prompts(parse_json_array(reply)) if not leaks_name(p, skill["name"])]
+    prompts: list[str] = []
+    for _ in range(GENERATION_ATTEMPTS):
+        reply = gateway.chat([{"role": "system", "content": GEN_SYSTEM}, {"role": "user", "content": message}])
+        prompts = [p for p in clean_prompts(parse_json_array(reply)) if not leaks_name(p, skill["name"])]
+        if prompts:
+            break
+    return prompts
 
 
 def nearest_siblings(skills: list[dict], index: int, count: int, vectors: list[dict]) -> list[int]:
@@ -106,15 +126,25 @@ def nearest_siblings(skills: list[dict], index: int, count: int, vectors: list[d
     return scored[:count]
 
 
-def judge_prompt(gateway: Gateway, prompt: str, candidates: list[dict]) -> list[str]:
-    listing = "\n".join(f"{i}. {c['name']}: {c['description'][:200]}" for i, c in enumerate(candidates))
-    reply = gateway.chat(
-        [{"role": "system", "content": JUDGE_SYSTEM},
-         {"role": "user", "content": JUDGE_TEMPLATE.format(prompt=prompt, candidates=listing)}],
-        temperature=0.0, max_tokens=200,
-    )
-    ids = [i for i in parse_json_array(reply) if isinstance(i, int) and 0 <= i < len(candidates)]
-    return [candidates[i]["name"] for i in ids]
+def parse_answer(reply: str) -> list | None:
+    """The last `ANSWER: [...]` line, or None when the reply has no usable answer (not the same as empty)."""
+    matches = ANSWER_RE.findall(reply)
+    if not matches:
+        return None
+    return parse_json_array(matches[-1])
+
+
+def judge_prompt(gateway: Gateway, prompt: str, candidates: list[dict]) -> list[str] | None:
+    """Names of the skills the judge says are needed; None if the judge never gave an answer."""
+    listing = "\n".join(f"{i}. {c['name']}: {c['description'][:400]}" for i, c in enumerate(candidates))
+    messages = [{"role": "system", "content": JUDGE_SYSTEM},
+                {"role": "user", "content": JUDGE_TEMPLATE.format(prompt=prompt, candidates=listing)}]
+    for _ in range(JUDGE_ATTEMPTS):
+        answer = parse_answer(gateway.chat(messages, temperature=0.0, max_tokens=JUDGE_MAX_TOKENS))
+        if answer is not None:
+            ids = [i for i in answer if isinstance(i, int) and 0 <= i < len(candidates)]
+            return [candidates[i]["name"] for i in ids]
+    return None
 
 
 def load_skills() -> list[dict]:
@@ -134,7 +164,7 @@ def process_skill(gateway: Gateway, skills: list[dict], vectors: list[dict], ind
         random.Random(f"{SEED}:{prompt}").shuffle(candidates)
         needed = judge_prompt(gateway, prompt, candidates)
         rows.append({"prompt": prompt, "written_for": skill["name"], "needed": needed,
-                     "candidates": [c["name"] for c in candidates]})
+                     "judged": needed is not None, "candidates": [c["name"] for c in candidates]})
     return rows
 
 
